@@ -424,17 +424,22 @@ class Automation:
         return True
     
     def randomize_action(self, action:dict, gi:GameInfo) -> dict:
-        """ Randomize ai choice: pick according to probaility from top 3 options"""
-        n = self.st.ai_randomize_choice     # randomize strength. 0 = no random, 5 = according to probability
+        """ Randomize ai choice: pick according to probaility from top options.
+        Strength 1-5: top 3 options. Strength 6-10: flatter distribution and wider pool (3 + n-5 options)"""
+        n = self.st.ai_randomize_choice     # randomize strength. 0 = no random, 5 = according to probability, >5 = flatter than probability
         if n == 0:
             return action
         mjai_type = action['type']
         if mjai_type == MjaiType.DAHAI:
             orig_pai = action['pai']
             options:dict = action['meta_options']            # e.g. {'1m':0.95, 'P':0.045, 'N':0.005, ...}
-            # get dahai options (tile only) from top 3
-            top_ops:list = [(k,v) for k,v in options[:3] if k in MJAI_TILES_SORTED]        
-            #pick from top3 according to probability
+            # get dahai options (tile only) from top K
+            top_k = 3 if n <= 5 else 3 + (n - 5)
+            top_ops:list = [(k,v) for k,v in options[:top_k] if k in MJAI_TILES_SORTED]
+            if not top_ops:
+                return action
+            orig_prob = top_ops[0][1]
+            # pick according to probability; power<1 flattens the distribution for n>5
             power = 1 / (0.2 * n)
             sum_probs = sum([v**power for k,v in top_ops])
             top_ops_powered = [(k, v**power/sum_probs) for k,v in top_ops]
