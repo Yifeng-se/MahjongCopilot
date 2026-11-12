@@ -135,15 +135,16 @@ def wait_for_file(file:str, timeout:int=5) -> bool:
 
 def sub_run_args() -> dict:
     """ return **args for subprocess.run"""
-    startup_info = subprocess.STARTUPINFO()
-    startup_info.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-    startup_info.wShowWindow = subprocess.SW_HIDE
     args = {
-        'capture_output':True, 
+        'capture_output': True, 
         'text': True,
-        'check': False,
-        'shell': True,
-        'startupinfo': startup_info}
+        'check': False}
+    if sys.platform == "win32":
+        startup_info = subprocess.STARTUPINFO()
+        startup_info.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startup_info.wShowWindow = subprocess.SW_HIDE
+        args['startupinfo'] = startup_info
+        args['shell'] = True
     return args
 
 
@@ -161,25 +162,21 @@ def is_certificate_installed(cert_file:str) -> tuple[bool, str]:
     """Check if the given certificate is installed in the system certificate store.
     Returns:
         (bool, str): True if the certificate is found in the system store, str is the stdout"""
-    # Get the hex serial number from the certificate file
     try:
-        serial_number = get_cert_serial_number(cert_file)
-        
         if sys.platform == "win32":
-            # Use certutil to look up the certificate by its serial number in the Root store
+            serial_number = get_cert_serial_number(cert_file)
             cmd = ['certutil', '-store', 'Root', serial_number]
             store_found_phrase = serial_number
         elif sys.platform == "darwin":
-            # TODO test on MacOS
-            # Use security to find the certificate by its serial number in the System keychain
-            cmd = ['security', 'find-certificate', '-c', serial_number, '/Library/Keychains/System.keychain']
+            keychain = str(pathlib.Path.home() / 'Library/Keychains/login.keychain-db')
+            cmd = ['security', 'find-certificate', '-c', 'mitmproxy', keychain]
             store_found_phrase = 'attributes:'
         else:   # unsupported platform
-            return False
+            return False, "unsupported platform"
         args = sub_run_args()
         result = subprocess.run(cmd, **args)    #pylint:disable=subprocess-run-check
         # Check if the command output indicates the certificate was found
-        if result.returncode==0:
+        if result.returncode == 0:
             if store_found_phrase in result.stdout or store_found_phrase.lower() in result.stdout:
                 return True, result.stdout + result.stderr
         return False, result.stdout + result.stderr
@@ -199,18 +196,12 @@ def install_root_cert(cert_file:str):
     """
     # Install cert. If the cert exists, system will skip installation
     if sys.platform == "win32":
-        print(f'"{cert_file}"')
-        full_command = ["certutil","-addstore","Root",cert_file]
-        # full_command = [
-        #     'powershell', '-Command', 
-        #     f"Start-Process 'certutil' -ArgumentList '-addstore', 'Root', '{cert_file}' -Wait -Verb 'RunAs';"
-        #     f"exit $LASTEXITCODE"
-        # ]
-        p=subprocess.run(full_command, **sub_run_args())
+        full_command = ["certutil", "-addstore", "Root", cert_file]
+        p = subprocess.run(full_command, **sub_run_args())
         stdout, stderr = p.stdout, p.stderr        
     elif sys.platform == "darwin":
-        # TODO Test on MAC system
-        cmd = ['sudo', 'security', 'add-trusted-cert', '-d', '-r', 'trustRoot', '-k', '/Library/Keychains/System.keychain', cert_file]
+        keychain = str(pathlib.Path.home() / 'Library/Keychains/login.keychain-db')
+        cmd = ['security', 'add-trusted-cert', '-d', '-r', 'trustRoot', '-k', keychain, cert_file]
         p = subprocess.run(cmd, capture_output=True, text=True, check=False)
         stdout, stderr = p.stdout, p.stderr
     else:

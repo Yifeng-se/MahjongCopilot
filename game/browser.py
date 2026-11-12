@@ -3,6 +3,7 @@ import logging
 import time
 import threading
 import queue
+import base64
 import os
 
 from io import BytesIO
@@ -31,6 +32,7 @@ class GameBrowser:
         self.context:BrowserContext = None
         self.page:Page = None        # playwright page, only used by thread
         self.fps_counter = FPSCounter()
+        self._cdp_session = None     # CDP session for screenshots, only used by thread
 
         # for tracking page info
         self._page_title:str = None
@@ -101,10 +103,12 @@ class GameBrowser:
                         headless=False,
                         viewport={'width': self.width, 'height': self.height},
                         proxy=proxy_object,
+                        ignore_https_errors=True,
                         ignore_default_args=["--enable-automation"],
                         args=[
                             "--noerrdialogs",
                             "--no-sandbox",
+                            "--ignore-certificate-errors",
                             disable_extensions_except_args,
                             load_extension_args
                         ]
@@ -121,8 +125,9 @@ class GameBrowser:
                         headless=False,
                         viewport={'width': self.width, 'height': self.height},
                         proxy=proxy_object,
+                        ignore_https_errors=True,
                         ignore_default_args=["--enable-automation"],
-                        args=["--noerrdialogs", "--no-sandbox"]
+                        args=["--noerrdialogs", "--no-sandbox", "--ignore-certificate-errors"]
                     )
                 except Exception as e:
                     LOGGER.error('Error launching the browser: %s', e, exc_info=True)
@@ -538,7 +543,20 @@ class GameBrowser:
             res_queue: queue for saving the image buff data"""
         if self.is_page_normal():
             try:
-                ss_bytes:BytesIO = self.page.screenshot(timeout=time_ms)
+                ss_bytes = None
+                try:
+                    # Capture directly from the compositor surface via CDP. Playwright's page.screenshot()
+                    # may briefly resize the viewport on headed Chromium, causing the screen to flicker.
+                    if self._cdp_session is None:
+                        self._cdp_session = self.context.new_cdp_session(self.page)
+                    result = self._cdp_session.send(
+                        "Page.captureScreenshot",
+                        {"format": "png", "fromSurface": True, "captureBeyondViewport": False})
+                    ss_bytes = base64.b64decode(result["data"])
+                except Exception as cdp_e:
+                    LOGGER.debug("CDP screenshot failed, fallback to playwright: %s", cdp_e)
+                    self._cdp_session = None
+                    ss_bytes = self.page.screenshot(timeout=time_ms)
                 res_queue.put(ss_bytes)
             except Exception as e:
                 LOGGER.error("Error taking screenshot: %s", e, exc_info=True)
