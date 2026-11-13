@@ -356,6 +356,8 @@ class BotManager:
             except Exception as e:
                 LOGGER.warning("Failed to parse liqi msg: %s\nError: %s", msg.content, e)
                 return
+            if liqimsg is None:     # skipped message (unknown/untracked method)
+                return
             liqi_id = liqimsg.get("id")
             liqi_type = liqimsg.get('type')
             liqi_method = liqimsg.get('method')

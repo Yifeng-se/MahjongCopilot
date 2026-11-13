@@ -131,7 +131,13 @@ class LiqiProto:
                 # assert(msg_id not in self.res_type)
                 method_name = msg_block[0]['data'].decode()                
                 _, lq, service, rpc = method_name.split('.')
-                proto_domain = self.jsonProto['nested'][lq]['nested'][service]['methods'][rpc]
+                try:
+                    proto_domain = self.jsonProto['nested'][lq]['nested'][service]['methods'][rpc]
+                except KeyError:
+                    # method not in bundled proto (e.g. newer Route/prepareLogin msgs): not needed, skip it
+                    LOGGER.debug("Skip unknown liqi method: %s", method_name)
+                    self.res_type[msg_id] = (method_name, None)
+                    return None
                 liqi_pb2_req = getattr(pb, proto_domain['requestType'])
                 proto_obj = liqi_pb2_req.FromString(msg_block[1]['data'])
                 dict_obj = MessageToDict(proto_obj, including_default_value_fields=True)
@@ -140,8 +146,11 @@ class LiqiProto:
                 self.msg_id = msg_id
             elif msg_type == MsgType.RES:
                 assert(len(msg_block[0]['data']) == 0)
-                assert(msg_id in self.res_type)
+                if msg_id not in self.res_type:     # response to a request we didn't track
+                    return None
                 method_name, liqi_pb2_res = self.res_type.pop(msg_id)
+                if liqi_pb2_res is None:            # response of a skipped unknown method
+                    return None
                 proto_obj = liqi_pb2_res.FromString(msg_block[1]['data'])
                 dict_obj = MessageToDict(proto_obj, including_default_value_fields=True)
             else:
